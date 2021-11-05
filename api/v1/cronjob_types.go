@@ -17,6 +17,8 @@ limitations under the License.
 package v1
 
 import (
+  batchv1beta1 "k8s.io/api/batch/v1beta1"
+  corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -29,13 +31,56 @@ type CronJobSpec struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// Foo is an example field of CronJob. Edit cronjob_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+	// Foo string `json:"foo,omitempty"`
+	//+kubebuilder:validation:MinLength=0
+
+	//Cronフォーマットのスケジュール
+	Schedule string `json:"schedule"`
+
+	//+kubebuilder:validation:Minimum=0
+
+	// +optional
+	StartingDeadlineSeconds *int64 `json:"startingDeadlineSeconds,omitempty"`
+
+	// +optional
+	ConcurrencyPolicy ConcurrencyPolicy `json:"concurrencyPolicy,omitempty"`
+
+	// +optional
+	Suspend *bool `json:"suspend,omitempty"`
+
+	JobTemplate batchv1beta1.JobTemplateSpec `json:"jobTemplate"`
+
+	//+kubebuilder:validation:Minimum=0
+
+	// +optional
+	SuccessfulJobsHistoryLimit *int32 `json:"successfulJobsHistoryLimit,omitempty"`
+
+	//+kubebuilder:validation:Minimum=0
+
+	// +optional
+
+	FailedJobsHistoryLimit *int32 `json:"failedJobsHistoryLimit,omitempty"`
 }
 
+//+kubebuilder:validation:Enum=Allow;Forbid;Replace
+type ConcurrencyPolicy string
+
+const (
+	AllowConcurrent ConcurrencyPolicy = "Allow"
+	FrobidConcurrent ConcurrencyPolicy = "Forbid"
+	ReplaceConcurrent ConcurrencyPolicy = "Replace"
+
+)
 // CronJobStatus defines the observed state of CronJob
 type CronJobStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+
+	//+optional
+	Active []corev1.ObjectReference `json:"active,omitempty"`
+
+	//+optional
+	LastScheduleTime *metav1.Time `json:"lastScheduleTime,omitempty"`
 }
 
 //+kubebuilder:object:root=true
