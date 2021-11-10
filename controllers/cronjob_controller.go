@@ -18,13 +18,18 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
-	kbatch "k8s/api/batch/v1"
-	corev1 "k8s/api/core/v1"
+	"github.com/robfig/cron"
+	kbatch "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	ref "k8s.io/client-go/tools/reference"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -62,7 +67,7 @@ type Clock interface {
 //
 
 var (
-	scheduledTimeAnnotation = "batch/.tutorial.kubebuilder.io/scheduled-at"
+	scheduledTimeAnnotation = "batch.tutorial.kubebuilder.io/scheduled-at"
 )
 
 // For more details, check Reconcile and its Result here:
@@ -72,6 +77,7 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	log := log.FromContext(ctx)
 
 	// TODO(user): your logic here
+	//1: Load the CronJob by name
 	var cronJob batchv1.CronJob
 	if err := r.Get(ctx, req.NamespacedName, &cronJob); err != nil {
 		log.Error(err, "unable to fetch CronJob")
@@ -79,8 +85,8 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// 2: List all active jobs, and update the status
-	var cronJobs kbatch.JobList
-	if err := r.List(ctx, &cronJobs, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
+	var childJobs kbatch.JobList
+	if err := r.List(ctx, &childJobs, client.InNamespace(req.Namespace), client.MatchingFields{jobOwnerKey: req.Name}); err != nil {
 		log.Error(err, "unable to list child Jobs")
 		return ctrl.Result{}, err
 	}
@@ -116,11 +122,11 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		_, finishedType := isJobFinished(&job)
 		switch finishedType {
 		case "":
-			activeJobs = append(activeJobs, &childJobs.Item[i])
+			activeJobs = append(activeJobs, &childJobs.Items[i])
 		case kbatch.JobFailed:
-			failedJobs = append(failedJobs, &childJobs.Item[i])
+			failedJobs = append(failedJobs, &childJobs.Items[i])
 		case kbatch.JobComplete:
-			successfulJobs = append(successfulJobs, &childJobs.Item[i])
+			successfulJobs = append(successfulJobs, &childJobs.Items[i])
 		}
 
 		scheduledTimeForJob, err := getScheduledTimeForJob(&job)
@@ -131,7 +137,7 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if scheduledTimeForJob != nil {
 			if mostRecentTime == nil {
 				mostRecentTime = scheduledTimeForJob
-			} else if mostRecentTime.before(*scheduledTimeForJob) {
+			} else if mostRecentTime.Before(*scheduledTimeForJob) {
 				mostRecentTime = scheduledTimeForJob
 			}
 		}
@@ -161,17 +167,17 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// 3: Clean up old jobs according to the history limit
 	if cronJob.Spec.FailedJobsHistoryLimit != nil {
-		sort.Slice(failedJobs, func(i, j int) book {
+		sort.Slice(failedJobs, func(i, j int) bool {
 			if failedJobs[i].Status.StartTime == nil {
 				return failedJobs[j].Status.StartTime != nil
 			}
 			return failedJobs[i].Status.StartTime.Before(failedJobs[j].Status.StartTime)
 		})
 		for i, job := range failedJobs {
-			if int32(i) >= int32(len(failedJobs))-*cronJob.Spec.FailedJobHistoryLimit {
+			if int32(i) >= int32(len(failedJobs))-*cronJob.Spec.FailedJobsHistoryLimit {
 				break
 			}
-			if err := r.Delete(ctx, job, clien.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
+			if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
 				log.Error(err, "unable to delete old failed job", "job", job)
 			} else {
 				log.V(0).Info("deleted old failed job", "job", job)
@@ -206,21 +212,21 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// 5: Get the next scheduled run
 	getNextSchedule := func(cronJob *batchv1.CronJob, now time.Time) (lastMissed time.Time, next time.Time, err error) {
-		sched, err := cron.ParaseStandard(cronJob.Spec.Schedule)
+		sched, err := cron.ParseStandard(cronJob.Spec.Schedule)
 		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Error("Unparseable schedule %q: %v", cronJob.Spec.Schedule, err)
+			return time.Time{}, time.Time{}, fmt.Errorf("Unparseable schedule %q: %v", cronJob.Spec.Schedule, err)
 		}
 
 		var earliestTime time.Time
 		if cronJob.Status.LastScheduleTime != nil {
-			earliestTime = cronJob.Status.LastScheduleTime.time
+			earliestTime = cronJob.Status.LastScheduleTime.Time
 		} else {
 			earliestTime = cronJob.ObjectMeta.CreationTimestamp.Time
 		}
 		if cronJob.Spec.StartingDeadlineSeconds != nil {
 			schedulingDeadline := now.Add(-time.Second * time.Duration(*cronJob.Spec.StartingDeadlineSeconds))
 
-			if schedulingDeadline.Adter(earliestTime) {
+			if schedulingDeadline.After(earliestTime) {
 				earliestTime = schedulingDeadline
 			}
 		}
@@ -246,7 +252,7 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	scheduledResult := ctrl.Result{RequeueAfter: nextRun.Sub(r.Now())}
-	log = log.WithValued("now", r.Now(), "next run", nextRun)
+	log = log.WithValues("now", r.Now(), "next run", nextRun)
 
 	//6: Run a new job if it's on schedule, not past the deadline, and not blocked by our concurrency policy
 	if missedRun.IsZero() {
@@ -269,7 +275,7 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return scheduledResult, nil
 	}
 
-	if cronJob.Spec.COncurrencyPolicy == batchv1.ReplaceConcurrent {
+	if cronJob.Spec.ConcurrencyPolicy == batchv1.ReplaceConcurrent {
 		for _, activeJob := range activeJobs {
 			if err := r.Delete(ctx, activeJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
 				log.Error(err, "unable to delete active job", "job", activeJob)
@@ -320,7 +326,7 @@ func (r *CronJobReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// 7: Requeue when we either see a runningjob or it's time for the next scheduled run
 	return scheduledResult, nil
 
-	return ctrl.Result{}, nil
+	// return ctrl.Result{}, nil
 }
 
 var (
@@ -334,7 +340,7 @@ func (r *CronJobReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		r.Clock = realClock{}
 	}
 
-	if err := mgr.GetFieledIndexer().IndexField(context.Background(), &kbatch.Job{}, jobOwnerKey, func(rawObj client.Object) []string {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &kbatch.Job{}, jobOwnerKey, func(rawObj client.Object) []string {
 		job := rawObj.(*kbatch.Job)
 		owner := metav1.GetControllerOf(job)
 		if owner == nil {

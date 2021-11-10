@@ -17,8 +17,8 @@ limitations under the License.
 package v1
 
 import (
-  batchv1beta1 "k8s.io/api/batch/v1beta1"
-  corev1 "k8s.io/api/core/v1"
+	batchv1beta1 "k8s.io/api/batch/v1beta1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -66,11 +66,11 @@ type CronJobSpec struct {
 type ConcurrencyPolicy string
 
 const (
-	AllowConcurrent ConcurrencyPolicy = "Allow"
-	FrobidConcurrent ConcurrencyPolicy = "Forbid"
+	AllowConcurrent   ConcurrencyPolicy = "Allow"
+	ForbidConcurrent  ConcurrencyPolicy = "Forbid"
 	ReplaceConcurrent ConcurrencyPolicy = "Replace"
-
 )
+
 // CronJobStatus defines the observed state of CronJob
 type CronJobStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster

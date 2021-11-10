@@ -17,8 +17,11 @@ limitations under the License.
 package v1
 
 import (
+	"github.com/robfig/cron"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	validationutils "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -101,7 +104,7 @@ func (r *CronJob) validateCronJob() error {
 		return nil
 	}
 
-	return apierrors.NewInValid(
+	return apierrors.NewInvalid(
 		schema.GroupKind{Group: "batch.tutorial.kubebuilder.io", Kind: "CronJob"},
 		r.Name, allErrs)
 }
