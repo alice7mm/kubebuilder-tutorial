@@ -87,6 +87,14 @@ func main() {
 	}
 	//+kubebuilder:scaffold:builder
 
+	if os.Getenc("ENABLE_WEBHOOKS") != "false" {
+		if err = (&batchv1.CronJob{}).SetupWebhookWithManager(mgr); err != nil {
+			seupLog.Error(err, "unable to create webhook", "webhook", "CronJob")
+			os.Exit(1)
+		}
+	}
+	//+kubebuilder:scaffold:builder
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
